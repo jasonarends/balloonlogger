@@ -1,0 +1,12 @@
+[Unit]
+Description=Button Press Detection
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python /home/pi/button.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
