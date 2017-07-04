@@ -5,8 +5,9 @@
 
 import RPi.GPIO as GPIO
 import math, threading, time, os, pickle, sys, signal, syslog
-import bmp280, csv
+import bmp280, csv, string, random
 from subprocess import call
+from picamera import PiCamera
 
 def signalHandler(signal, frame):
 	#signalHandler catches ctrl-C and cleanly exits
@@ -116,10 +117,26 @@ def getBCM280():
 	return press, temp
 
 def snapPhoto():
-	syslog.syslog('snapPhoto')
+	#syslog.syslog('snapPhoto')
+	global uniqueID
+	with PiCamera() as camera:
+		camera.resolution = (3280, 2464)
+		time.sleep(2)
+		timestr = time.strftime("%Y%m%d-%H%M%S")
+		filename = '/home/pi/balloonlogger/photo/' + uniqueID + '_img_' + timestr + '.jpg'
+		camera.capture(filename)
 
 def takeVid():
-	syslog.syslog('takeVid')
+	#syslog.syslog('takeVid')
+	global uniqueID
+	with PiCamera() as camera:
+		camera.resolution = (1640, 922)
+		time.sleep(2)
+		timestr = time.strftime("%Y%m%d-%H%M%S")
+		filename = '/home/pi/balloonlogger/video/' + uniqueID + '_vid_' + timestr + '.h264'
+		camera.start_recording(filename)
+		camera.wait_recording(50)
+		camera.stop_recording()
 
 def calcAlt(zeroPress, currPress):
 	#syslog.syslog('calcAlt zeroPress: %s' % zeroPress)
@@ -131,25 +148,26 @@ def calcAlt(zeroPress, currPress):
 def xmitData(temp1,temp2,pres1,alt):
 	#syslog.syslog('xmitData')
 	xmitStr = 'Data={},{},{},{}'.format(temp1, temp2, pres1, alt)
-	for i in range(1,3):
+	for i in range(0,3):
 		call(['beacon', '-d', 'K0JAA', '-s', 'sm0', xmitStr])
 		time.sleep(0.1)
 
 def logLoop():
 	global logData
 	global zPress
+	global uniqueID
 	if logData:
-		logFile = open('/home/pi/data.csv','a')
+		logFile = open('/home/pi/balloonlogger/data/' + uniqueID + '_data.csv','a')
 		csvWriter = csv.writer(logFile)
 		zPress = initPressure()
 	while logData:
-		syslog.syslog('start log loop')
+		timestamp = math.trunc(time.time())
+		syslog.syslog('start log loop %s' % timestamp)
 		GPIO.output(redLED, True)
 		t1 = getDS18b20()
 		p1, t2 = getBCM280()
 		GPIO.output(redLED, False)
 		alt = calcAlt(zPress, p1)
-		timestamp = math.trunc(time.time())
 		csvWriter.writerow([timestamp,t1,t2,p1,alt])
 		logFile.flush()
 		os.fsync(logFile.fileno())
@@ -158,13 +176,19 @@ def logLoop():
 		GPIO.output(redLED, False)
 		snapPhoto()
 		takeVid()
-		time.sleep(60)
+		loopDuration = math.trunc(time.time()) - timestamp
+		if loopDuration < 60:
+			t = 60 - loopDuration
+		else:
+			t = 0
+		time.sleep(t)
 
 	logFile.close()
 
 if __name__ == "__main__":
-	global logData, zPress
+	global logData, zPress, uniqueID
 	gpioSetup()
+	uniqueID = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(4))
 	logData = pickleReader('button.pickle')
 	if logData:
 		#zPress = initPressure()
