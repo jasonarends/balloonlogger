@@ -116,11 +116,12 @@ def getBCM280():
 	sensor.close()
 	return press, temp
 
-def snapPhoto():
+def snapPhoto(annotation):
 	#syslog.syslog('snapPhoto')
 	global uniqueID, redLED
 	with PiCamera() as camera:
 		camera.resolution = (3280, 2464)
+		camera.annotate_text = annotation
 		time.sleep(2)
 		GPIO.output(redLED, True)
 		timestr = time.strftime("%Y%m%d-%H%M%S")
@@ -128,11 +129,13 @@ def snapPhoto():
 		camera.capture(filename)
 		GPIO.output(redLED, False)
 
-def takeVid():
+def takeVid(annotation):
 	#syslog.syslog('takeVid')
 	global uniqueID, redLED
 	with PiCamera() as camera:
 		camera.resolution = (1640, 922)
+		camera.framerate = 30
+		camera.annotate_text = annotation
 		time.sleep(2)
 		GPIO.output(redLED, True)
 		timestr = time.strftime("%Y%m%d-%H%M%S")
@@ -151,7 +154,7 @@ def calcAlt(zeroPress, currPress):
 
 def xmitData(temp1,temp2,pres1,alt):
 	#syslog.syslog('xmitData')
-	xmitStr = 'Data={},{},{},{}'.format(temp1, temp2, pres1, alt)
+	xmitStr = 'Data={:.1f},{:.1f},{:.1f},{:.1f}'.format(temp1, temp2, pres1, alt)
 	for i in range(0,3):
 		call(['beacon', '-d', 'K0JAA', '-s', 'sm0', xmitStr])
 		time.sleep(0.1)
@@ -164,26 +167,38 @@ def logLoop():
 		csvWriter = csv.writer(logFile)
 		zPress = initPressure()
 	while logData:
-		GPIO.output([redLED,blueLED], False)
+		GPIO.output([redLED, greenLED], False)
 		timestamp = math.trunc(time.time())
 		syslog.syslog('start log loop %s' % timestamp)
+
+		#gather data from DS18b20 temp sensor
 		GPIO.output(blueLED, True)
-		GPIO.output(greenLED, False)
 		t1 = getDS18b20()
+
+		#gather data from BCM280 temp and pressure sensor
 		p1, t2 = getBCM280()
 		GPIO.output(greenLED, True)
 		GPIO.output(blueLED, False)
+
+		#convert pressure to altitude
 		alt = calcAlt(zPress, p1)
+
+		#write data to csv
 		csvWriter.writerow([timestamp,t1,t2,p1,alt])
 		logFile.flush()
 		os.fsync(logFile.fileno())
+
+		#transmit data using beacon command
 		GPIO.output([blueLED,redLED], True)
 		GPIO.output(greenLED, False)
 		xmitData(t1,t2,p1,alt)
+
+		#take photo and video
 		GPIO.output([redLED,blueLED],False)
 		GPIO.output(greenLED, True)
-		snapPhoto()
-		takeVid()
+		annotation = "{:.1f}C {:.1f}C {:.1f}hPa {:,.0f}ft".format(t1, t2, p1, alt)
+		snapPhoto(annotation)
+		takeVid(annotation)
 		GPIO.output([blueLED, redLED], False)
 		loopDuration = math.trunc(time.time()) - timestamp
 		if loopDuration < 60:
@@ -191,6 +206,7 @@ def logLoop():
 		else:
 			t = 0
 		time.sleep(t)
+		GPIO.output(redLED, True) #when the loop ends and stops, stay red
 
 	logFile.close()
 
